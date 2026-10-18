@@ -238,7 +238,7 @@ function Library:CreateWindow(options)
 	window:BuildScaling()
 	window:BuildTopBar(options)
 	window:BuildSidebar(options)
-	window:BuildWatermark(options)
+	window:BuildCursor(options)
 	window:BuildNotifications()
 	window:BuildToggleButton(options)
 	window:EnableDragging()
@@ -363,12 +363,14 @@ function Window:BuildSidebar(options)
 	})
 end
 
-function Window:BuildWatermark(options)
-	local config = options.Watermark
-	if config == false then
+function Window:BuildCursor(options)
+	local config = options.Cursor
+	if config == false or not UserInputService.MouseEnabled then
 		return
 	end
-	config = config or {}
+	if config == nil or config == true then
+		config = {}
+	end
 
 	local title = options.Title or "ui"
 	local prefix = config.Prefix or (title:sub(1, 1):upper() .. title:sub(2))
@@ -382,30 +384,66 @@ function Window:BuildWatermark(options)
 		table.insert(gradients, create("UIGradient", {}, parent))
 	end
 
-	self.Watermark = create("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.new(0.5, 18, 0.5, 30),
-		Size = UDim2.fromOffset(160, 24),
+	self.OriginalMouseIconEnabled = UserInputService.MouseIconEnabled
+
+	self.CursorGui = create("ScreenGui", {
+		Name = "UILibraryCursor",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		DisplayOrder = 1000,
+	}, Players.LocalPlayer:WaitForChild("PlayerGui"))
+
+	self.Cursor = create("Frame", {
+		Size = UDim2.fromOffset(0, 0),
 		BackgroundTransparency = 1,
-		ZIndex = 10,
-	}, self.Main)
+		Visible = false,
+	}, self.CursorGui)
+
+	local crosshair = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromOffset(0, 0),
+		Size = UDim2.fromOffset(26, 26),
+		BackgroundTransparency = 1,
+	}, self.Cursor)
+
+	for index = 0, 3 do
+		local degrees = 45 + index * 90
+		local angle = math.rad(degrees)
+		local dash = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromOffset(13 + math.cos(angle) * 9, 13 + math.sin(angle) * 9),
+			Size = UDim2.fromOffset(7, 2),
+			Rotation = degrees,
+			BackgroundColor3 = Theme.White,
+			BorderSizePixel = 0,
+		}, crosshair)
+		addCorner(dash, 1)
+		addGradient(dash)
+	end
+
+	local textRow = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromOffset(0, 18),
+		Size = UDim2.fromOffset(200, 22),
+		BackgroundTransparency = 1,
+	}, self.Cursor)
 	create("UIListLayout", {
 		FillDirection = Enum.FillDirection.Horizontal,
 		HorizontalAlignment = Enum.HorizontalAlignment.Center,
 		VerticalAlignment = Enum.VerticalAlignment.Center,
-	}, self.Watermark)
+	}, textRow)
 
-	local function createWatermarkText(text, gradientText)
+	local function createCursorText(text, gradientText)
 		local label = create("TextLabel", {
 			Size = UDim2.new(0, 0, 1, 0),
 			AutomaticSize = Enum.AutomaticSize.X,
 			BackgroundTransparency = 1,
 			Text = text,
 			Font = Fonts.Medium,
-			TextSize = 17,
+			TextSize = 15,
 			TextColor3 = Theme.White,
-			ZIndex = 10,
-		}, self.Watermark)
+		}, textRow)
 
 		local glow = create("UIStroke", {
 			Color = Theme.White,
@@ -420,16 +458,23 @@ function Window:BuildWatermark(options)
 		end
 	end
 
-	createWatermarkText(prefix, true)
+	createCursorText(prefix, true)
 	if suffix ~= "" then
-		createWatermarkText(suffix, config.GradientSuffix == true)
+		createCursorText(suffix, config.GradientSuffix == true)
 	end
 
 	local elapsed = 0
-	self:Connect(RunService.Heartbeat, function(deltaTime)
-		if not self.Main.Visible or not self.Watermark.Visible then
+	self:Connect(RunService.RenderStepped, function(deltaTime)
+		local shouldShow = self.Main.Visible and self.CursorEnabled ~= false
+		self.Cursor.Visible = shouldShow
+		UserInputService.MouseIconEnabled = not shouldShow and self.OriginalMouseIconEnabled
+
+		if not shouldShow then
 			return
 		end
+
+		local mouse = UserInputService:GetMouseLocation()
+		self.Cursor.Position = UDim2.fromOffset(mouse.X, mouse.Y)
 
 		elapsed += deltaTime
 		local shift = elapsed * 0.12
@@ -447,6 +492,8 @@ function Window:BuildWatermark(options)
 		for _, glow in ipairs(glowStrokes) do
 			glow.Transparency = pulse
 		end
+
+		crosshair.Rotation = (elapsed * 110) % 360
 	end)
 end
 
@@ -628,10 +675,8 @@ function Window:Refresh()
 	end
 end
 
-function Window:SetWatermarkVisible(visible)
-	if self.Watermark then
-		self.Watermark.Visible = visible
-	end
+function Window:SetCursorEnabled(enabled)
+	self.CursorEnabled = enabled
 end
 
 function Window:Notify(options)
@@ -696,6 +741,10 @@ end
 function Window:Destroy()
 	for _, connection in ipairs(self.Connections) do
 		connection:Disconnect()
+	end
+	if self.CursorGui then
+		UserInputService.MouseIconEnabled = self.OriginalMouseIconEnabled
+		self.CursorGui:Destroy()
 	end
 	self.Gui:Destroy()
 end
