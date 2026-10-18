@@ -1,0 +1,754 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+
+local Library = {}
+local Window = {}
+local Tab = {}
+local Page = {}
+local Section = {}
+
+Window.__index = Window
+Tab.__index = Tab
+Page.__index = Page
+Section.__index = Section
+
+local Theme = {
+	Background = Color3.fromRGB(14, 14, 17),
+	Sidebar = Color3.fromRGB(10, 10, 13),
+	Card = Color3.fromRGB(20, 20, 24),
+	Border = Color3.fromRGB(36, 36, 42),
+	SearchBorder = Color3.fromRGB(90, 90, 112),
+	Control = Color3.fromRGB(30, 30, 36),
+	Text = Color3.fromRGB(214, 214, 220),
+	Muted = Color3.fromRGB(120, 120, 132),
+	Accent = Color3.fromRGB(157, 142, 224),
+	White = Color3.new(1, 1, 1),
+}
+
+local Fonts = {
+	Regular = Enum.Font.Gotham,
+	Medium = Enum.Font.GothamMedium,
+	Bold = Enum.Font.GothamBold,
+}
+
+local Layout = {
+	WindowWidth = 816,
+	WindowHeight = 462,
+	TopBarHeight = 38,
+	SidebarWidth = 152,
+	RowHeight = 30,
+	SliderRowHeight = 46,
+	DropdownWidth = 90,
+	DropdownItemHeight = 22,
+}
+
+local MouseButton1 = Enum.UserInputType.MouseButton1
+local MouseMovement = Enum.UserInputType.MouseMovement
+local Touch = Enum.UserInputType.Touch
+
+local function create(className, properties, parent)
+	local instance = Instance.new(className)
+	for property, value in pairs(properties) do
+		instance[property] = value
+	end
+	instance.Parent = parent
+	return instance
+end
+
+local function addCorner(instance, radius)
+	return create("UICorner", { CornerRadius = UDim.new(0, radius or 4) }, instance)
+end
+
+local function addStroke(instance, color)
+	return create("UIStroke", {
+		Color = color or Theme.Border,
+		Thickness = 1,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	}, instance)
+end
+
+local function addPadding(instance, top, bottom, left, right)
+	return create("UIPadding", {
+		PaddingTop = UDim.new(0, top or 0),
+		PaddingBottom = UDim.new(0, bottom or 0),
+		PaddingLeft = UDim.new(0, left or 0),
+		PaddingRight = UDim.new(0, right or 0),
+	}, instance)
+end
+
+local function createLabel(parent, text, properties)
+	local labelProperties = {
+		BackgroundTransparency = 1,
+		Text = text,
+		Font = Fonts.Regular,
+		TextSize = 11,
+		TextColor3 = Theme.Text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}
+	for property, value in pairs(properties or {}) do
+		labelProperties[property] = value
+	end
+	return create("TextLabel", labelProperties, parent)
+end
+
+local function isPressInput(input)
+	return input.UserInputType == MouseButton1 or input.UserInputType == Touch
+end
+
+local function isMoveInput(input)
+	return input.UserInputType == MouseMovement or input.UserInputType == Touch
+end
+
+local function formatInputName(inputEnum)
+	local name = inputEnum.Name:gsub("MouseButton", "M")
+	return "[" .. name .. "]"
+end
+
+local function createColumn(parent, scaleX, offsetX, widthOffset)
+	local column = create("Frame", {
+		Position = UDim2.new(scaleX, offsetX, 0, 0),
+		Size = UDim2.new(0.5, widthOffset, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+	}, parent)
+	create("UIListLayout", {
+		Padding = UDim.new(0, 10),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, column)
+	return column
+end
+
+local function openDropdownList(window, anchor, options, selected, onSelect)
+	local overlay = create("TextButton", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		ZIndex = 50,
+	}, window.Main)
+
+	local offsetX = anchor.AbsolutePosition.X - window.Main.AbsolutePosition.X + anchor.AbsoluteSize.X - Layout.DropdownWidth
+	local offsetY = anchor.AbsolutePosition.Y - window.Main.AbsolutePosition.Y + anchor.AbsoluteSize.Y - 4
+
+	local list = create("Frame", {
+		Position = UDim2.fromOffset(offsetX, offsetY),
+		Size = UDim2.fromOffset(Layout.DropdownWidth, #options * Layout.DropdownItemHeight + 8),
+		BackgroundColor3 = Theme.Sidebar,
+		BorderSizePixel = 0,
+		ZIndex = 51,
+	}, overlay)
+	addCorner(list)
+	addStroke(list)
+
+	for index, option in ipairs(options) do
+		local item = create("TextButton", {
+			Position = UDim2.fromOffset(0, 4 + (index - 1) * Layout.DropdownItemHeight),
+			Size = UDim2.new(1, 0, 0, Layout.DropdownItemHeight),
+			BackgroundTransparency = 1,
+			Text = option,
+			Font = Fonts.Regular,
+			TextSize = 10,
+			TextColor3 = option == selected and Theme.Accent or Theme.Text,
+			ZIndex = 52,
+		}, list)
+		item.MouseButton1Click:Connect(function()
+			overlay:Destroy()
+			onSelect(option)
+		end)
+	end
+
+	overlay.MouseButton1Click:Connect(function()
+		overlay:Destroy()
+	end)
+end
+
+function Library:CreateWindow(options)
+	options = options or {}
+
+	local window = setmetatable({
+		Tabs = {},
+		ActiveTab = nil,
+		SearchRows = {},
+		Connections = {},
+	}, Window)
+
+	window.Gui = create("ScreenGui", {
+		Name = "UILibrary",
+		ResetOnSpawn = false,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		DisplayOrder = 100,
+	}, Players.LocalPlayer:WaitForChild("PlayerGui"))
+
+	window.Main = create("Frame", {
+		Size = UDim2.fromOffset(Layout.WindowWidth, Layout.WindowHeight),
+		Position = UDim2.new(0.5, -Layout.WindowWidth / 2, 0.5, -Layout.WindowHeight / 2),
+		BackgroundColor3 = Theme.Background,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+	}, window.Gui)
+	addCorner(window.Main, 6)
+	addStroke(window.Main)
+
+	window:BuildTopBar(options)
+	window:BuildSidebar(options)
+	window:EnableDragging()
+	window:EnableToggleKey(options.Key or Enum.KeyCode.RightShift)
+
+	return window
+end
+
+function Window:Connect(signal, callback)
+	local connection = signal:Connect(callback)
+	table.insert(self.Connections, connection)
+	return connection
+end
+
+function Window:BuildTopBar(options)
+	self.TopBar = create("Frame", {
+		Size = UDim2.new(1, 0, 0, Layout.TopBarHeight),
+		BackgroundColor3 = Theme.Sidebar,
+		BorderSizePixel = 0,
+	}, self.Main)
+
+	create("Frame", {
+		Position = UDim2.new(0, 0, 1, -1),
+		Size = UDim2.new(1, 0, 0, 1),
+		BackgroundColor3 = Theme.Border,
+		BorderSizePixel = 0,
+	}, self.TopBar)
+
+	local spacedTitle = (options.Title or "ui"):gsub(".", "%0 ")
+	createLabel(self.TopBar, spacedTitle, {
+		Position = UDim2.fromOffset(22, 0),
+		Size = UDim2.fromOffset(140, Layout.TopBarHeight),
+		TextColor3 = Theme.Accent,
+		Font = Fonts.Bold,
+		TextSize = 10,
+	})
+
+	self.TabList = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 0),
+		Size = UDim2.new(0, 0, 1, 0),
+		AutomaticSize = Enum.AutomaticSize.X,
+		BackgroundTransparency = 1,
+	}, self.TopBar)
+	create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, self.TabList)
+
+	self.SearchBox = create("TextBox", {
+		Position = UDim2.new(1, -166, 0, 7),
+		Size = UDim2.fromOffset(152, 24),
+		BackgroundColor3 = Theme.Background,
+		Text = "",
+		PlaceholderText = "Search...",
+		PlaceholderColor3 = Theme.Text,
+		TextColor3 = Theme.Text,
+		Font = Fonts.Regular,
+		TextSize = 10,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ClearTextOnFocus = false,
+		BorderSizePixel = 0,
+	}, self.TopBar)
+	addCorner(self.SearchBox, 5)
+	addStroke(self.SearchBox, Theme.SearchBorder)
+	addPadding(self.SearchBox, 0, 0, 28, 0)
+
+	self.SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+		self:ApplySearch(self.SearchBox.Text)
+	end)
+end
+
+function Window:BuildSidebar(options)
+	self.Sidebar = create("Frame", {
+		Position = UDim2.fromOffset(0, Layout.TopBarHeight),
+		Size = UDim2.new(0, Layout.SidebarWidth, 1, -Layout.TopBarHeight),
+		BackgroundColor3 = Theme.Sidebar,
+		BorderSizePixel = 0,
+	}, self.Main)
+
+	create("Frame", {
+		Position = UDim2.new(1, -1, 0, 0),
+		Size = UDim2.new(0, 1, 1, 0),
+		BackgroundColor3 = Theme.Border,
+		BorderSizePixel = 0,
+	}, self.Sidebar)
+
+	local buildText = 'build: <font color="#9d8ee0">' .. (options.Build or "alpha") .. "</font>"
+	local userText = 'user: <font color="#9d8ee0">' .. Players.LocalPlayer.Name .. "</font>"
+
+	createLabel(self.Sidebar, buildText, {
+		Position = UDim2.new(0, 19, 1, -36),
+		Size = UDim2.new(1, -19, 0, 14),
+		RichText = true,
+		TextSize = 9,
+	})
+	createLabel(self.Sidebar, userText, {
+		Position = UDim2.new(0, 19, 1, -22),
+		Size = UDim2.new(1, -19, 0, 14),
+		RichText = true,
+		TextSize = 9,
+	})
+end
+
+function Window:EnableDragging()
+	local isDragging = false
+	local dragStart
+	local startPosition
+
+	self.TopBar.InputBegan:Connect(function(input)
+		if isPressInput(input) then
+			isDragging = true
+			dragStart = input.Position
+			startPosition = self.Main.Position
+		end
+	end)
+
+	self:Connect(UserInputService.InputChanged, function(input)
+		if isDragging and isMoveInput(input) then
+			local delta = input.Position - dragStart
+			self.Main.Position = UDim2.new(
+				startPosition.X.Scale,
+				startPosition.X.Offset + delta.X,
+				startPosition.Y.Scale,
+				startPosition.Y.Offset + delta.Y
+			)
+		end
+	end)
+
+	self:Connect(UserInputService.InputEnded, function(input)
+		if isPressInput(input) then
+			isDragging = false
+		end
+	end)
+end
+
+function Window:EnableToggleKey(keyCode)
+	self:Connect(UserInputService.InputBegan, function(input, processed)
+		if not processed and input.KeyCode == keyCode then
+			self.Main.Visible = not self.Main.Visible
+		end
+	end)
+end
+
+function Window:ApplySearch(query)
+	query = query:lower()
+	for _, row in ipairs(self.SearchRows) do
+		row.Frame.Visible = query == "" or row.Text:find(query, 1, true) ~= nil
+	end
+end
+
+function Window:Refresh()
+	for _, tab in ipairs(self.Tabs) do
+		local isActiveTab = tab == self.ActiveTab
+		tab.Button.TextColor3 = isActiveTab and Theme.White or Theme.Muted
+		tab.Underline.Visible = isActiveTab
+		tab.Sidebar.Visible = isActiveTab
+
+		for _, page in ipairs(tab.Pages) do
+			local isActivePage = page == tab.ActivePage
+			page.Frame.Visible = isActiveTab and isActivePage
+			page.Indicator.Visible = isActivePage
+			page.Button.TextColor3 = isActivePage and Theme.White or Theme.Muted
+		end
+	end
+end
+
+function Window:Destroy()
+	for _, connection in ipairs(self.Connections) do
+		connection:Disconnect()
+	end
+	self.Gui:Destroy()
+end
+
+function Window:AddTab(name)
+	local tab = setmetatable({
+		Window = self,
+		Pages = {},
+		ActivePage = nil,
+	}, Tab)
+
+	tab.Button = create("TextButton", {
+		Size = UDim2.new(0, 0, 1, 0),
+		AutomaticSize = Enum.AutomaticSize.X,
+		BackgroundTransparency = 1,
+		Text = name,
+		Font = Fonts.Regular,
+		TextSize = 12,
+		TextColor3 = Theme.Muted,
+		AutoButtonColor = false,
+	}, self.TabList)
+	addPadding(tab.Button, 0, 0, 30, 30)
+
+	tab.Underline = create("Frame", {
+		Position = UDim2.new(0, -12, 1, -2),
+		Size = UDim2.new(1, 24, 0, 2),
+		BackgroundColor3 = Theme.Accent,
+		BorderSizePixel = 0,
+		Visible = false,
+	}, tab.Button)
+
+	tab.Sidebar = create("Frame", {
+		Position = UDim2.fromOffset(0, 16),
+		Size = UDim2.new(1, 0, 1, -70),
+		BackgroundTransparency = 1,
+		Visible = false,
+	}, self.Sidebar)
+	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, tab.Sidebar)
+
+	table.insert(self.Tabs, tab)
+	self.ActiveTab = self.ActiveTab or tab
+
+	tab.Button.MouseButton1Click:Connect(function()
+		self.ActiveTab = tab
+		self:Refresh()
+	end)
+
+	self:Refresh()
+	return tab
+end
+
+function Tab:AddPage(name)
+	local window = self.Window
+	local page = setmetatable({
+		Window = window,
+		Tab = self,
+	}, Page)
+
+	local entry = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 30),
+		BackgroundTransparency = 1,
+	}, self.Sidebar)
+
+	page.Indicator = create("Frame", {
+		Position = UDim2.fromOffset(26, 1),
+		Size = UDim2.fromOffset(2, 28),
+		BackgroundColor3 = Theme.Accent,
+		BorderSizePixel = 0,
+		Visible = false,
+	}, entry)
+
+	page.Button = create("TextButton", {
+		Position = UDim2.fromOffset(34, 0),
+		Size = UDim2.new(1, -34, 1, 0),
+		BackgroundTransparency = 1,
+		Text = name,
+		Font = Fonts.Medium,
+		TextSize = 11,
+		TextColor3 = Theme.Muted,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, entry)
+
+	page.Frame = create("ScrollingFrame", {
+		Position = UDim2.fromOffset(Layout.SidebarWidth, Layout.TopBarHeight),
+		Size = UDim2.new(1, -Layout.SidebarWidth, 1, -Layout.TopBarHeight),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = Theme.Accent,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		Visible = false,
+	}, window.Main)
+	addPadding(page.Frame, 10, 10, 0, 0)
+
+	page.LeftColumn = createColumn(page.Frame, 0, 2, -9)
+	page.RightColumn = createColumn(page.Frame, 0.5, 5, -13)
+
+	table.insert(self.Pages, page)
+	self.ActivePage = self.ActivePage or page
+
+	page.Button.MouseButton1Click:Connect(function()
+		self.ActivePage = page
+		window:Refresh()
+	end)
+
+	window:Refresh()
+	return page
+end
+
+function Page:AddSection(title, side)
+	local parent = side == "Right" and self.RightColumn or self.LeftColumn
+
+	local section = setmetatable({
+		Window = self.Window,
+	}, Section)
+
+	section.Frame = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = Theme.Card,
+		BorderSizePixel = 0,
+	}, parent)
+	addCorner(section.Frame, 4)
+	addStroke(section.Frame)
+	addPadding(section.Frame, 8, 6, 15, 15)
+	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, section.Frame)
+
+	createLabel(section.Frame, title, {
+		Size = UDim2.new(1, 0, 0, 26),
+		Font = Fonts.Medium,
+		TextSize = 11,
+		TextColor3 = Theme.White,
+	})
+
+	return section
+end
+
+function Section:CreateRow(height, searchText)
+	local row = create("Frame", {
+		Size = UDim2.new(1, 0, 0, height),
+		BackgroundTransparency = 1,
+	}, self.Frame)
+	table.insert(self.Window.SearchRows, {
+		Frame = row,
+		Text = searchText:lower(),
+	})
+	return row
+end
+
+function Section:AddLabel(text)
+	local row = self:CreateRow(24, text)
+	return createLabel(row, text, {
+		Size = UDim2.new(1, 0, 1, 0),
+		TextColor3 = Theme.Muted,
+	})
+end
+
+function Section:AddButton(text, callback)
+	local row = self:CreateRow(Layout.RowHeight, text)
+	local button = create("TextButton", {
+		Position = UDim2.fromOffset(0, 3),
+		Size = UDim2.new(1, 0, 0, 24),
+		BackgroundColor3 = Theme.Control,
+		Text = text,
+		Font = Fonts.Regular,
+		TextSize = 11,
+		TextColor3 = Theme.Text,
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, row)
+	addCorner(button, 4)
+
+	button.MouseButton1Click:Connect(function()
+		if callback then
+			callback()
+		end
+	end)
+end
+
+function Section:AddToggle(text, default, callback)
+	local row = self:CreateRow(Layout.RowHeight, text)
+	local toggle = { Value = default and true or false }
+
+	local checkbox = create("Frame", {
+		Position = UDim2.fromOffset(0, 8),
+		Size = UDim2.fromOffset(14, 14),
+		BackgroundColor3 = toggle.Value and Theme.Accent or Theme.Control,
+		BorderSizePixel = 0,
+	}, row)
+	addCorner(checkbox, 3)
+
+	createLabel(row, text, {
+		Position = UDim2.fromOffset(22, 0),
+		Size = UDim2.new(1, -22, 1, 0),
+	})
+
+	local hitbox = create("TextButton", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+	}, row)
+
+	function toggle:Set(value)
+		self.Value = value
+		checkbox.BackgroundColor3 = value and Theme.Accent or Theme.Control
+		if callback then
+			callback(value)
+		end
+	end
+
+	hitbox.MouseButton1Click:Connect(function()
+		toggle:Set(not toggle.Value)
+	end)
+
+	return toggle
+end
+
+function Section:AddSlider(text, min, max, default, suffix, decimals, callback)
+	local window = self.Window
+	local row = self:CreateRow(Layout.SliderRowHeight, text)
+	local valueFormat = "%." .. (decimals or 0) .. "f"
+	local precision = 10 ^ (decimals or 0)
+	local slider = { Value = default }
+
+	createLabel(row, text, {
+		Size = UDim2.new(0.6, 0, 0, 26),
+	})
+
+	local valueLabel = createLabel(row, string.format(valueFormat, default) .. (suffix or ""), {
+		Size = UDim2.new(1, 0, 0, 26),
+		TextXAlignment = Enum.TextXAlignment.Right,
+		TextColor3 = Theme.Muted,
+		TextSize = 10,
+	})
+
+	local track = create("Frame", {
+		Position = UDim2.fromOffset(0, 30),
+		Size = UDim2.new(1, 0, 0, 5),
+		BackgroundColor3 = Theme.Control,
+		BorderSizePixel = 0,
+	}, row)
+	addCorner(track, 3)
+
+	local fill = create("Frame", {
+		Size = UDim2.new((default - min) / (max - min), 0, 1, 0),
+		BackgroundColor3 = Theme.Accent,
+		BorderSizePixel = 0,
+	}, track)
+	addCorner(fill, 3)
+
+	local hitbox = create("TextButton", {
+		Position = UDim2.fromOffset(0, 24),
+		Size = UDim2.new(1, 0, 0, 20),
+		BackgroundTransparency = 1,
+		Text = "",
+	}, row)
+
+	function slider:Set(value)
+		value = math.clamp(value, min, max)
+		value = math.floor(value * precision + 0.5) / precision
+		self.Value = value
+		fill.Size = UDim2.new((value - min) / (max - min), 0, 1, 0)
+		valueLabel.Text = string.format(valueFormat, value) .. (suffix or "")
+		if callback then
+			callback(value)
+		end
+	end
+
+	local function setFromPosition(positionX)
+		local alpha = math.clamp((positionX - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+		slider:Set(min + (max - min) * alpha)
+	end
+
+	local isDragging = false
+
+	hitbox.InputBegan:Connect(function(input)
+		if isPressInput(input) then
+			isDragging = true
+			setFromPosition(input.Position.X)
+		end
+	end)
+
+	window:Connect(UserInputService.InputChanged, function(input)
+		if isDragging and isMoveInput(input) then
+			setFromPosition(input.Position.X)
+		end
+	end)
+
+	window:Connect(UserInputService.InputEnded, function(input)
+		if isPressInput(input) then
+			isDragging = false
+		end
+	end)
+
+	return slider
+end
+
+function Section:AddDropdown(text, options, default, callback)
+	local window = self.Window
+	local row = self:CreateRow(Layout.RowHeight, text)
+	local dropdown = { Value = default or options[1] }
+
+	createLabel(row, text, {
+		Size = UDim2.new(0.6, 0, 1, 0),
+	})
+
+	local button = create("TextButton", {
+		Position = UDim2.new(1, -70, 0, 0),
+		Size = UDim2.fromOffset(70, Layout.RowHeight),
+		BackgroundTransparency = 1,
+		Text = dropdown.Value .. " ▼",
+		Font = Fonts.Regular,
+		TextSize = 10,
+		TextColor3 = Theme.Text,
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, row)
+
+	function dropdown:Set(value)
+		self.Value = value
+		button.Text = value .. " ▼"
+		if callback then
+			callback(value)
+		end
+	end
+
+	button.MouseButton1Click:Connect(function()
+		openDropdownList(window, button, options, dropdown.Value, function(option)
+			dropdown:Set(option)
+		end)
+	end)
+
+	return dropdown
+end
+
+function Section:AddKeybind(text, default, callback)
+	local window = self.Window
+	local row = self:CreateRow(Layout.RowHeight, text)
+	local keybind = { Value = default }
+	local isListening = false
+
+	createLabel(row, text, {
+		Size = UDim2.new(0.6, 0, 1, 0),
+	})
+
+	local button = create("TextButton", {
+		Position = UDim2.new(1, -70, 0, 0),
+		Size = UDim2.fromOffset(70, Layout.RowHeight),
+		BackgroundTransparency = 1,
+		Text = formatInputName(default),
+		Font = Fonts.Regular,
+		TextSize = 10,
+		TextColor3 = Theme.Muted,
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, row)
+
+	button.MouseButton1Click:Connect(function()
+		isListening = true
+		button.Text = "[...]"
+	end)
+
+	local function tryBind(input)
+		if input.UserInputType == Enum.UserInputType.Keyboard then
+			if input.KeyCode ~= Enum.KeyCode.Escape then
+				keybind.Value = input.KeyCode
+			end
+			return true
+		end
+		if input.UserInputType == Enum.UserInputType.MouseButton2 or input.UserInputType == Enum.UserInputType.MouseButton3 then
+			keybind.Value = input.UserInputType
+			return true
+		end
+		return false
+	end
+
+	window:Connect(UserInputService.InputBegan, function(input, processed)
+		if isListening then
+			if tryBind(input) then
+				isListening = false
+				button.Text = formatInputName(keybind.Value)
+			end
+			return
+		end
+
+		local matchesKey = input.KeyCode == keybind.Value or input.UserInputType == keybind.Value
+		if not processed and matchesKey and callback then
+			callback()
+		end
+	end)
+
+	return keybind
+end
+
+return Library
