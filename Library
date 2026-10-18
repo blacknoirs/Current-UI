@@ -49,6 +49,8 @@ local Layout = {
 	CardTitleHeight = 28,
 	DropdownWidth = 90,
 	DropdownItemHeight = 22,
+	ScreenMargin = 24,
+	MinScale = 0.4,
 }
 
 Library.Theme = Theme
@@ -156,8 +158,9 @@ local function openDropdownList(window, anchor, options, selected, onSelect)
 		ZIndex = 50,
 	}, window.Main)
 
-	local offsetX = anchor.AbsolutePosition.X - window.Main.AbsolutePosition.X + anchor.AbsoluteSize.X - Layout.DropdownWidth
-	local offsetY = anchor.AbsolutePosition.Y - window.Main.AbsolutePosition.Y + anchor.AbsoluteSize.Y - 4
+	local scale = window.Scale.Scale
+	local offsetX = (anchor.AbsolutePosition.X - window.Main.AbsolutePosition.X + anchor.AbsoluteSize.X) / scale - Layout.DropdownWidth
+	local offsetY = (anchor.AbsolutePosition.Y - window.Main.AbsolutePosition.Y + anchor.AbsoluteSize.Y) / scale - 4
 
 	local list = create("Frame", {
 		Position = UDim2.fromOffset(offsetX, offsetY),
@@ -206,18 +209,23 @@ function Library:CreateWindow(options)
 		ActiveTab = nil,
 		Sections = {},
 		Connections = {},
+		ToggleKey = options.Key or options.ToggleKey or Enum.KeyCode.RightShift,
+		ScaleMultiplier = options.Scale or 1,
+		AutoScale = options.AutoScale ~= false,
 	}, Window)
 
 	window.Gui = create("ScreenGui", {
 		Name = "UILibrary",
 		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 		DisplayOrder = 100,
 	}, Players.LocalPlayer:WaitForChild("PlayerGui"))
 
 	window.Main = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
 		Size = UDim2.fromOffset(Layout.WindowWidth, Layout.WindowHeight),
-		Position = UDim2.new(0.5, -Layout.WindowWidth / 2, 0.5, -Layout.WindowHeight / 2),
 		BackgroundColor3 = Theme.Background,
 		BorderSizePixel = 0,
 		ClipsDescendants = true,
@@ -225,12 +233,16 @@ function Library:CreateWindow(options)
 	addCorner(window.Main, 6)
 	addStroke(window.Main)
 
+	window.Scale = create("UIScale", { Scale = 1 }, window.Main)
+
+	window:BuildScaling()
 	window:BuildTopBar(options)
 	window:BuildSidebar(options)
 	window:BuildWatermark(options)
 	window:BuildNotifications()
+	window:BuildToggleButton(options)
 	window:EnableDragging()
-	window:EnableToggleKey(options.Key or Enum.KeyCode.RightShift)
+	window:EnableToggleKey()
 
 	return window
 end
@@ -239,6 +251,34 @@ function Window:Connect(signal, callback)
 	local connection = signal:Connect(callback)
 	table.insert(self.Connections, connection)
 	return connection
+end
+
+function Window:UpdateScale()
+	local viewport = self.Gui.AbsoluteSize
+	if viewport.X == 0 or viewport.Y == 0 then
+		return
+	end
+
+	local scale = self.ScaleMultiplier
+	if self.AutoScale then
+		local fitX = viewport.X / (Layout.WindowWidth + Layout.ScreenMargin * 2)
+		local fitY = viewport.Y / (Layout.WindowHeight + Layout.ScreenMargin * 2)
+		scale = math.max(math.min(scale, fitX, fitY), Layout.MinScale)
+	end
+
+	self.Scale.Scale = scale
+end
+
+function Window:BuildScaling()
+	self:Connect(self.Gui:GetPropertyChangedSignal("AbsoluteSize"), function()
+		self:UpdateScale()
+	end)
+	self:UpdateScale()
+end
+
+function Window:SetScale(multiplier)
+	self.ScaleMultiplier = multiplier
+	self:UpdateScale()
 end
 
 function Window:BuildTopBar(options)
@@ -344,49 +384,18 @@ function Window:BuildWatermark(options)
 
 	self.Watermark = create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.new(0.5, 12, 0.5, 14),
-		Size = UDim2.fromOffset(120, 56),
+		Position = UDim2.new(0.5, 18, 0.5, 30),
+		Size = UDim2.fromOffset(160, 24),
 		BackgroundTransparency = 1,
 		ZIndex = 10,
 	}, self.Main)
-
-	local spinner = create("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, -6, 0, 0),
-		Size = UDim2.fromOffset(26, 26),
-		BackgroundTransparency = 1,
-		ZIndex = 10,
-	}, self.Watermark)
-
-	for index = 0, 3 do
-		local degrees = 45 + index * 90
-		local angle = math.rad(degrees)
-		local dash = create("Frame", {
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromOffset(13 + math.cos(angle) * 9, 13 + math.sin(angle) * 9),
-			Size = UDim2.fromOffset(7, 2),
-			Rotation = degrees,
-			BackgroundColor3 = Theme.White,
-			BorderSizePixel = 0,
-			ZIndex = 10,
-		}, spinner)
-		addCorner(dash, 1)
-		addGradient(dash)
-	end
-
-	local textRow = create("Frame", {
-		Position = UDim2.fromOffset(0, 30),
-		Size = UDim2.new(1, 0, 0, 20),
-		BackgroundTransparency = 1,
-		ZIndex = 10,
-	}, self.Watermark)
 	create("UIListLayout", {
 		FillDirection = Enum.FillDirection.Horizontal,
 		HorizontalAlignment = Enum.HorizontalAlignment.Center,
 		VerticalAlignment = Enum.VerticalAlignment.Center,
-	}, textRow)
+	}, self.Watermark)
 
-	local function createWatermarkText(text, animated)
+	local function createWatermarkText(text, gradientText)
 		local label = create("TextLabel", {
 			Size = UDim2.new(0, 0, 1, 0),
 			AutomaticSize = Enum.AutomaticSize.X,
@@ -396,22 +405,24 @@ function Window:BuildWatermark(options)
 			TextSize = 17,
 			TextColor3 = Theme.White,
 			ZIndex = 10,
-		}, textRow)
+		}, self.Watermark)
+
 		local glow = create("UIStroke", {
 			Color = Theme.White,
-			Thickness = 1.5,
-			Transparency = 0.75,
+			Thickness = 2,
+			Transparency = 0.6,
 		}, label)
+
 		table.insert(glowStrokes, glow)
-		if animated then
+		addGradient(glow)
+		if gradientText then
 			addGradient(label)
-			addGradient(glow)
 		end
 	end
 
 	createWatermarkText(prefix, true)
 	if suffix ~= "" then
-		createWatermarkText(suffix, false)
+		createWatermarkText(suffix, config.GradientSuffix == true)
 	end
 
 	local elapsed = 0
@@ -432,12 +443,10 @@ function Window:BuildWatermark(options)
 			gradient.Color = sequence
 		end
 
-		local pulse = 0.72 + math.sin(elapsed * 2.2) * 0.12
+		local pulse = 0.55 + math.sin(elapsed * 2.2) * 0.15
 		for _, glow in ipairs(glowStrokes) do
 			glow.Transparency = pulse
 		end
-
-		spinner.Rotation = (elapsed * 110) % 360
 	end)
 end
 
@@ -471,12 +480,13 @@ function Window:EnableDragging()
 
 	self:Connect(UserInputService.InputChanged, function(input)
 		if isDragging and isMoveInput(input) then
+			local viewport = self.Gui.AbsoluteSize
 			local delta = input.Position - dragStart
 			self.Main.Position = UDim2.new(
-				startPosition.X.Scale,
-				startPosition.X.Offset + delta.X,
-				startPosition.Y.Scale,
-				startPosition.Y.Offset + delta.Y
+				math.clamp(startPosition.X.Scale + delta.X / viewport.X, 0, 1),
+				0,
+				math.clamp(startPosition.Y.Scale + delta.Y / viewport.Y, 0, 1),
+				0
 			)
 		end
 	end)
@@ -488,10 +498,102 @@ function Window:EnableDragging()
 	end)
 end
 
-function Window:EnableToggleKey(keyCode)
+function Window:EnableToggleKey()
 	self:Connect(UserInputService.InputBegan, function(input, processed)
-		if not processed and input.KeyCode == keyCode then
-			self.Main.Visible = not self.Main.Visible
+		if not processed and input.KeyCode == self.ToggleKey then
+			self:Toggle()
+		end
+	end)
+end
+
+function Window:SetToggleKey(keyCode)
+	self.ToggleKey = keyCode
+end
+
+function Window:SetVisible(visible)
+	self.Main.Visible = visible
+end
+
+function Window:Toggle()
+	self:SetVisible(not self.Main.Visible)
+end
+
+function Window:BuildToggleButton(options)
+	local setting = options.ToggleButton
+	if setting == nil then
+		setting = UserInputService.TouchEnabled
+	end
+	if not setting then
+		return
+	end
+
+	self.ToggleButton = create("Frame", {
+		Position = options.ToggleButtonPosition or UDim2.new(0, 16, 0, 64),
+		Size = UDim2.fromOffset(40, 40),
+		BackgroundColor3 = Theme.Card,
+		BorderSizePixel = 0,
+		ZIndex = 20,
+	}, self.Gui)
+	addCorner(self.ToggleButton, 10)
+	addStroke(self.ToggleButton, Theme.Accent)
+
+	for index = 0, 2 do
+		local bar = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0.5, 0, 0, 13 + index * 7),
+			Size = UDim2.fromOffset(18, 2),
+			BackgroundColor3 = Theme.White,
+			BorderSizePixel = 0,
+			ZIndex = 21,
+		}, self.ToggleButton)
+		addCorner(bar, 1)
+	end
+
+	local hitbox = create("TextButton", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		ZIndex = 22,
+	}, self.ToggleButton)
+
+	local isPressing = false
+	local wasMoved = false
+	local pressStart
+	local startPosition
+
+	hitbox.InputBegan:Connect(function(input)
+		if isPressInput(input) then
+			isPressing = true
+			wasMoved = false
+			pressStart = input.Position
+			startPosition = self.ToggleButton.Position
+		end
+	end)
+
+	self:Connect(UserInputService.InputChanged, function(input)
+		if isPressing and isMoveInput(input) then
+			local delta = input.Position - pressStart
+			if delta.Magnitude > 6 then
+				wasMoved = true
+			end
+			if wasMoved then
+				local viewport = self.Gui.AbsoluteSize
+				self.ToggleButton.Position = UDim2.new(
+					startPosition.X.Scale + delta.X / viewport.X,
+					startPosition.X.Offset,
+					startPosition.Y.Scale + delta.Y / viewport.Y,
+					startPosition.Y.Offset
+				)
+			end
+		end
+	end)
+
+	self:Connect(UserInputService.InputEnded, function(input)
+		if isPressing and isPressInput(input) then
+			isPressing = false
+			if not wasMoved then
+				self:Toggle()
+			end
 		end
 	end)
 end
@@ -948,7 +1050,7 @@ function Section:AddDropdown(text, options, default, callback)
 	return dropdown
 end
 
-function Section:AddKeybind(text, default, callback)
+function Section:AddKeybind(text, default, callback, onChanged)
 	local window = self.Window
 	local row = self:CreateRow(Layout.RowHeight, text)
 	local keybind = { Value = default }
@@ -995,6 +1097,9 @@ function Section:AddKeybind(text, default, callback)
 				isListening = false
 				button.Text = formatInputName(keybind.Value)
 				button.TextColor3 = Theme.Muted
+				if onChanged then
+					onChanged(keybind.Value)
+				end
 			end
 			return
 		end
